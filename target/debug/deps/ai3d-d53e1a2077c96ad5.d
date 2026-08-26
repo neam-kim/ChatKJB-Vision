@@ -4,4 +4,5 @@
 
 src/main.rs:
 
+# env-dep:CARGO_MANIFEST_DIR=/Users/neam/ai3d
 # env-dep:CARGO_PKG_NAME=ai3d

@@ -117,6 +117,25 @@ fn color(s: &str) -> [f32; 4] {
     }
 }
 fn build(scene: &Path) -> Result<PathBuf> {
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/scene_to_glb.py");
+    if Command::new("python3")
+        .args(["-c", "import trimesh"])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+    {
+        let out = scene.with_extension("glb");
+        let status = Command::new("python3")
+            .args([
+                script.to_str().unwrap(),
+                scene.to_str().unwrap(),
+                out.to_str().unwrap(),
+            ])
+            .status()?;
+        if status.success() {
+            return Ok(out);
+        }
+    }
     let s = parse(scene)?;
     let out = scene.with_extension("glb");
     let mut meshes = Vec::new();
