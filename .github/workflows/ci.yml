@@ -15,10 +15,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+      - name: Ensure Rust components
+        run: rustup component add rustfmt clippy
 
       - name: Rust formatting
         run: cargo fmt --check
