@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
     fs,
+    io::{ErrorKind, Write},
+    os::unix::fs::OpenOptionsExt,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     thread,
@@ -103,10 +105,15 @@ struct Runtime {
     viewer_pid: Option<u32>,
 }
 
+fn screenshot_path() -> PathBuf {
+    runtime_dir().join("current.png")
+}
+fn screenshot_request_path() -> PathBuf {
+    runtime_dir().join("screenshot.request")
+}
+
 fn runtime_dir() -> PathBuf {
-    dirs::runtime_dir()
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join("ai3d")
+    PathBuf::from("/tmp/ai3d")
 }
 fn runtime_path() -> PathBuf {
     runtime_dir().join("runtime.json")
@@ -134,6 +141,54 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
 }
 fn write_runtime(runtime: &Runtime) -> Result<()> {
     write_atomic(&runtime_path(), &serde_json::to_vec_pretty(runtime)?)
+}
+
+fn herdr_current_matches() -> bool {
+    let pane = match std::env::var("HERDR_PANE_ID") {
+        Ok(v) if !v.is_empty() => v,
+        _ => return false,
+    };
+    if std::env::var("HERDR_ENV").ok().as_deref() != Some("1") {
+        return false;
+    }
+    let output = Command::new("herdr")
+        .args(["pane", "current", "--current"])
+        .output()
+        .ok();
+    output
+        .filter(|o| o.status.success())
+        .and_then(|o| serde_json::from_slice::<Value>(&o.stdout).ok())
+        .and_then(|v| json_string(&v, "pane_id"))
+        .as_deref()
+        == Some(pane.as_str())
+}
+
+fn managed_paths() -> Vec<PathBuf> {
+    vec![
+        runtime_path(),
+        live_glb_path(),
+        camera_path(),
+        runtime_path().with_extension("tmp"),
+        live_glb_path().with_extension("tmp"),
+        camera_path().with_extension("json.tmp"),
+        screenshot_path(),
+        screenshot_path().with_extension("png.tmp"),
+        screenshot_request_path(),
+        live_glb_path().with_extension("new.glb"),
+    ]
+}
+fn cleanup_managed() -> Result<()> {
+    for path in managed_paths() {
+        match fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
+    }
+    if runtime_dir().is_dir() && fs::read_dir(runtime_dir())?.next().is_none() {
+        fs::remove_dir(runtime_dir())?;
+    }
+    Ok(())
 }
 fn absolute(path: &Path) -> Result<PathBuf> {
     if path.is_absolute() {
@@ -182,6 +237,7 @@ fn build_to(scene: &Path, output: &Path) -> Result<()> {
 }
 fn stage(scene: &Path) -> Result<Runtime> {
     let scene = absolute(scene)?;
+    fs::create_dir_all(runtime_dir())?;
     let glb = live_glb_path();
     build_to(&scene, &glb)?;
     let mut runtime = read_runtime();
@@ -348,8 +404,7 @@ fn close() -> Result<()> {
                 .status();
         }
     }
-    write_runtime(&Runtime::default())?;
-    Ok(())
+    cleanup_managed()
 }
 
 fn main() -> Result<()> {
@@ -381,8 +436,9 @@ fn main() -> Result<()> {
                     .args(["pane", "close", stale_pane])
                     .status();
             }
+            cleanup_managed()?;
             let mut runtime = stage(&scene)?;
-            if std::env::var_os("HERDR_ENV").is_none() {
+            if !herdr_current_matches() {
                 eprintln!("Herdr is unavailable. In a Ghostty right pane run:");
                 eprintln!("{} __viewer", std::env::current_exe()?.display());
                 return Ok(());
@@ -408,13 +464,64 @@ fn main() -> Result<()> {
         Cmd::State => state(),
         Cmd::Close => close(),
         Cmd::Screenshot => {
+            let runtime = read_runtime();
+            let pid = runtime.viewer_pid.context("viewer is not running")?;
+            if !viewer_is_alive(pid) {
+                bail!("viewer is not running");
+            }
+            let out = screenshot_path();
+            let old = modified(&out);
+            if let Ok(()) = fs::remove_file(&out) {}
+            fs::create_dir_all(runtime_dir())?;
+            let nonce = format!(
+                "capture:{}\n",
+                SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)?
+                    .as_nanos()
+            );
+            let mut request = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(screenshot_request_path())
+                .context("another screenshot request is in progress")?;
+            request.write_all(nonce.as_bytes())?;
+            let deadline = SystemTime::now() + Duration::from_secs(3);
+            loop {
+                if modified(&out).is_some_and(|m| old.is_none_or(|o| m > o))
+                    && fs::metadata(&out).map(|m| m.len() > 100).unwrap_or(false)
+                {
+                    break;
+                }
+                if SystemTime::now() >= deadline {
+                    if fs::read_to_string(screenshot_request_path())
+                        .ok()
+                        .as_deref()
+                        == Some(nonce.as_str())
+                    {
+                        let _ = fs::remove_file(screenshot_request_path());
+                    }
+                    bail!("screenshot timed out");
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+            if fs::read_to_string(screenshot_request_path())
+                .ok()
+                .as_deref()
+                == Some(nonce.as_str())
+            {
+                let _ = fs::remove_file(screenshot_request_path());
+            }
+            let scene = runtime.scene.context("no active scene")?;
+            let camera = runtime
+                .camera_state
+                .and_then(|p| fs::read_to_string(p).ok())
+                .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+                .and_then(|v| v.get("camera").cloned())
+                .unwrap_or(Value::Null);
             println!(
                 "{}",
-                json!({
-                    "supported": false,
-                    "phase": 2,
-                    "reason": "Ghostty pane pixel capture is unavailable; Kitty graphics are not present in PTY text"
-                })
+                json!({"supported":true,"path":out,"camera":camera,"scene":scene})
             );
             Ok(())
         }
@@ -439,5 +546,22 @@ mod tests {
         let file = tempfile::NamedTempFile::new().unwrap();
         fs::write(file.path(), r#"{"objects":[{"id":"a","type":"torus"}]}"#).unwrap();
         assert!(parse(file.path()).is_err());
+    }
+
+    #[test]
+    fn cleanup_removes_only_managed_targets() {
+        fs::create_dir_all(runtime_dir()).unwrap();
+        for path in managed_paths() {
+            fs::write(path, b"x").unwrap();
+        }
+        let sentinel = runtime_dir().join("keep.me");
+        fs::write(&sentinel, b"keep").unwrap();
+        cleanup_managed().unwrap();
+        assert!(sentinel.exists());
+        for path in managed_paths() {
+            assert!(!path.exists(), "left managed target {}", path.display());
+        }
+        fs::remove_file(sentinel).unwrap();
+        fs::remove_dir(runtime_dir()).unwrap();
     }
 }

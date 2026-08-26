@@ -32,6 +32,7 @@ ai3d build examples/basic.json
 ai3d open examples/basic.json
 ai3d state
 ai3d show examples/all-primitives.json
+ai3d screenshot
 ai3d close
 ```
 
@@ -40,7 +41,8 @@ ai3d close
 - `show` switches the existing viewer to another scene without replacing the rasterminal process.
 - Saving the active JSON recompiles a stable runtime GLB. Patched rasterminal notices the atomic replacement, reloads it in the same process, and preserves the current camera.
 - `state` merges canonical scene objects with live camera state (`azimuth`, `elevation`, `distance`, `target`, and quaternion).
-- `close` closes only the pane recorded by this ai3d runtime.
+- `screenshot` requests the active viewer to write `/tmp/ai3d/current.png` and returns its path, camera, and scene metadata.
+- `close` stops the managed pane/viewer and removes only ai3d runtime artifacts. It is safe to run repeatedly; a later `open` cleans stale ai3d state when the recorded viewer is gone.
 
 Scene primitives are `sphere`, `cube`, `cylinder`, `cone`, `line`, and `arrow`. Mesh objects accept `position`, XYZ degree `rotation`, `scale`, `color`, and `opacity`. Lines and arrows accept `from`/`to`; their object transform is applied afterward. A top-level `arrows` array is also accepted for the compact form shown in `examples/basic.json`.
 
@@ -50,6 +52,6 @@ rasterminal controls are mouse drag or WASD/arrows to orbit, scroll or `+`/`-` t
 
 Runtime files live under the platform runtime directory (currently `/tmp/ai3d`): `runtime.json`, stable `scene.glb`, and `camera.json`.
 
-`ai3d screenshot` intentionally reports an unsupported Phase 2 feature. Herdr can inspect PTY text and pane geometry but cannot return the actual pixels of one Ghostty pane; Kitty images are not present in the text buffer. A future pane-vision helper needs ScreenCaptureKit/CoreGraphics and reliable pane-to-screen coordinate mapping.
+`ai3d screenshot` uses the single active viewer session and waits briefly for a fresh `/tmp/ai3d/current.png`; it errors if no viewer is running or the request times out. The rasterminal build used with this project must provide the corresponding screenshot request handling.
 
 Only one ai3d viewer session is managed per user runtime directory. rasterminal's documented tmux/GNU screen limitation still applies; the tested Herdr/Ghostty direct PTY path supports Kitty graphics.

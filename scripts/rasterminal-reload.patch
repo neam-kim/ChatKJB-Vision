@@ -1,17 +1,45 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 4d4cb43..7ae832e 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -21,6 +21,7 @@ endif()
+
+ set(THREADS_PREFER_PTHREAD_FLAG ON)
+ find_package(Threads REQUIRED)
++find_package(PNG REQUIRED)
+ # Modern glibc may make Threads::Threads empty. Pass -pthread explicitly so its compile and
+ # link semantics remain paired on GNU-compatible compilers.
+ add_library(rasterminal_threads INTERFACE)
+@@ -314,6 +315,7 @@ target_link_libraries(rasterminal PRIVATE
+   rasterminal_release_opts
+   rasterminal_threads
+   ${RASTERMINAL_SHM_LIB})
++target_link_libraries(rasterminal PRIVATE PNG::PNG)
+ # GCC LTO loses Draco's per-file suppression during link-time recompilation. Keep the
+ # suppression on the link step so project compilation still checks -Wmaybe-uninitialized.
+ target_link_options(rasterminal PRIVATE
 diff --git a/src/main.cpp b/src/main.cpp
-index 54eee17..8930020 100644
+index 54eee17..3e92bab 100644
 --- a/src/main.cpp
 +++ b/src/main.cpp
-@@ -27,0 +28,2 @@
+@@ -25,12 +25,34 @@
+ #include <cstring>
+ #include <exception>
+ #include <functional>
 +#include <filesystem>
 +#include <fstream>
-@@ -33,0 +36,19 @@ namespace
-+    void write_ai3d_state(const Camera &camera, const char *path)
+ #include <string>
+ #include <thread>
+ #include <vector>
+
+ namespace
+ {
++    bool write_ai3d_state(const Camera &camera, const char *path)
 +    {
-+        if (path == nullptr || *path == '\0') return;
++        if (path == nullptr || *path == '\0') return false;
 +        const std::string tmp = std::string(path) + ".tmp";
 +        std::ofstream out(tmp, std::ios::trunc);
-+        if (!out) return;
++        if (!out) return false;
 +        const vec3 offset = camera.eye() - camera.target;
 +        const float azimuth = std::atan2(offset.z, offset.x) * 180.0f / 3.14159265358979323846f;
 +        const float elevation = std::atan2(offset.y, std::sqrt(offset.x * offset.x + offset.z * offset.z))
@@ -21,16 +49,32 @@ index 54eee17..8930020 100644
 +            << ",\"elevation\":" << elevation << ",\"distance\":" << camera.distance << ",\"target\":["
 +            << camera.target.x << "," << camera.target.y << "," << camera.target.z << "]}}\n";
 +        out.close();
++        if (!out) return false;
 +        std::error_code ec;
 +        std::filesystem::rename(tmp, path, ec);
-+        if (ec) { std::filesystem::remove(path, ec); std::filesystem::rename(tmp, path, ec); }
++        return !ec;
 +    }
-@@ -754,0 +776,4 @@ int main(int argc, char *argv[])
+
+     volatile sig_atomic_t
+         g_interrupted = // NOLINT(cppcoreguidelines-avoid-non-const-global-variables): written by signal handler
+@@ -752,6 +774,13 @@ int main(int argc, char *argv[])
+         constexpr int IDLE_FPS = 60;
+         // Feed FPS only intervals that ended in rendering, not the idle-loop rate.
+         bool prev_frame_rendered = true;
++        Camera last_saved_camera = camera;
++        float camera_save_age = 0.0f;
++        bool camera_state_dirty = true;
 +        const char *ai3d_watch = std::getenv("AI3D_WATCH");
 +        const char *ai3d_state = std::getenv("AI3D_STATE");
 +        std::error_code ai3d_ec;
 +        auto ai3d_mtime = std::filesystem::last_write_time(args.model_path, ai3d_ec);
-@@ -781,0 +807,16 @@ int main(int argc, char *argv[])
+
+         using clock = std::chrono::steady_clock;
+         auto prev = clock::now();
+@@ -779,12 +808,29 @@ int main(int argc, char *argv[])
+         bool running = true;
+         while (running)
+         {
 +            if (ai3d_watch != nullptr && *ai3d_watch != '\0')
 +            {
 +                auto current = std::filesystem::last_write_time(ai3d_watch, ai3d_ec);
@@ -47,5 +91,99 @@ index 54eee17..8930020 100644
 +                    }
 +                }
 +            }
-@@ -1150,0 +1192 @@ int main(int argc, char *argv[])
-+            write_ai3d_state(camera, ai3d_state);
+             auto now = clock::now();
+             const float raw_dt = std::chrono::duration<float>(now - prev).count();
+             prev = now;
+             // Cap stalls at the held-key window so camera motion cannot jump and
+             // +/- taps retain the same timing basis as wheel steps.
+             const float dt = std::min(raw_dt, Camera::HELD_KEY_WINDOW);
++            camera_save_age += raw_dt;
+
+             // Feed the FPS EMA complete rendered intervals only. Use uncapped raw_dt so
+             // slow frames remain accurate; ignore a zero-duration clock tick.
+@@ -1148,6 +1194,41 @@ int main(int argc, char *argv[])
+                 renderer.render(mesh, camera, lights, n_lights, cur_ambient, fb);
+             }
+             fb.present();
++            const bool camera_changed = camera.target.x != last_saved_camera.target.x || camera.target.y != last_saved_camera.target.y ||
++                camera.target.z != last_saved_camera.target.z || camera.distance != last_saved_camera.distance ||
++                camera.orientation.x != last_saved_camera.orientation.x || camera.orientation.y != last_saved_camera.orientation.y ||
++                camera.orientation.z != last_saved_camera.orientation.z || camera.orientation.w != last_saved_camera.orientation.w;
++            camera_state_dirty = camera_state_dirty || camera_changed;
++            if (camera_state_dirty && camera_save_age >= 0.1f)
++            {
++                if (write_ai3d_state(camera, ai3d_state))
++                {
++                    last_saved_camera = camera;
++                    camera_save_age = 0.0f;
++                    camera_state_dirty = false;
++                }
++            }
++            const char *screenshot_request = "/tmp/ai3d/screenshot.request";
++            if (std::filesystem::exists(screenshot_request))
++            {
++                if (camera_state_dirty && write_ai3d_state(camera, ai3d_state))
++                {
++                    last_saved_camera = camera;
++                    camera_save_age = 0.0f;
++                    camera_state_dirty = false;
++                }
++                const char *png_tmp = "/tmp/ai3d/current.png.tmp";
++                if (fb.write_png(png_tmp))
++                {
++                    std::error_code screenshot_ec;
++                    std::filesystem::rename(png_tmp, "/tmp/ai3d/current.png", screenshot_ec);
++                    if (!screenshot_ec) std::filesystem::remove(screenshot_request, screenshot_ec);
++                }
++                else
++                {
++                    std::fprintf(stderr, "rasterminal: screenshot PNG encode failed\n");
++                }
++            }
+             scene_dirty = false;
+             prev_frame_rendered = rendered;
+
+diff --git a/src/terminal/framebuffer.cpp b/src/terminal/framebuffer.cpp
+index a26c114..e89e118 100644
+--- a/src/terminal/framebuffer.cpp
++++ b/src/terminal/framebuffer.cpp
+@@ -7,6 +7,7 @@
+ #include "src/terminal/sixel.h"    // escape composition for the sixel backend
+
+ #include "miniz.h" // zlib deflate for the kitty direct transport; config macros come from the build
++#include <png.h>
+
+ #include <algorithm>
+ #include <atomic>
+@@ -345,6 +346,19 @@ void Framebuffer::present()
+     }
+ }
+
++bool Framebuffer::write_png(const char *path) const
++{
++    if (path == nullptr || *path == '\0' || m_width <= 0 || m_height <= 0) return false;
++    std::vector<unsigned char> rgb(m_pixel.size() * 3u);
++    write_rgb_range(rgb.data(), 0, m_pixel.size());
++    png_image image{};
++    image.version = PNG_IMAGE_VERSION;
++    image.width = static_cast<png_uint_32>(m_width);
++    image.height = static_cast<png_uint_32>(m_height);
++    image.format = PNG_FORMAT_RGB;
++    return png_image_write_to_file(&image, path, 0, rgb.data(), 0, nullptr) != 0;
++}
++
+ // Serialize a direct-transport frame across the borrowed worker pool. The shm
+ // path streams chunks separately and gains nothing from this parallel stage.
+ void Framebuffer::write_rgb(unsigned char *out)
+diff --git a/src/terminal/framebuffer.h b/src/terminal/framebuffer.h
+index 98bbc07..5219a87 100644
+--- a/src/terminal/framebuffer.h
++++ b/src/terminal/framebuffer.h
+@@ -177,6 +177,7 @@ class Framebuffer
+
+     // Flush the pixel buffer to the terminal as a single write.
+     void present();
++    bool write_png(const char *path) const;
+
+   private:
+     // Compile-time color mode keeps the blocks inner loop branch-free.
