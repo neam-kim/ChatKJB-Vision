@@ -64,4 +64,16 @@ Only one ai3d viewer session is managed per user runtime directory. `ai3d show` 
 
 ## Verification
 
-The verified Herdr/Ghostty release gate has rendered a cube, three cylinders, and a DNA double helix in the actual right pane using the half-block backend. The repository CI performs portable source-level checks (`cargo fmt`, `clippy`, tests/build, and Python syntax compilation), but it cannot replace the macOS Ghostty/Herdr OS-level rendering acceptance test.
+The verified Herdr/Ghostty release gate has rendered a cube, three cylinders, and a DNA double helix in the actual right pane using the half-block backend.
+
+Run the portable source-level gate before pushing:
+
+```sh
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+cargo build --release
+python3 -m py_compile scripts/scene_to_glb.py
+```
+
+These checks do not replace the macOS Ghostty/Herdr OS-level rendering acceptance test. A GitHub-hosted workflow was intentionally not kept because this private repository did not receive a hosted runner during validation (`runner_id=0`, with no job steps started); that infrastructure condition is separate from the source-level test results.
