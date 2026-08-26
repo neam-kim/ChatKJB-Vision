@@ -1,28 +1,41 @@
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
-use notify::{RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::{
     fs,
     path::{Path, PathBuf},
-    process::Command,
-    time::Duration,
+    process::{Child, Command, Stdio},
+    thread,
+    time::{Duration, SystemTime},
 };
+
+const MANIFEST: &str = env!("CARGO_MANIFEST_DIR");
 
 #[derive(Parser)]
 struct Cli {
     #[command(subcommand)]
     command: Cmd,
 }
+
 #[derive(Subcommand)]
 enum Cmd {
-    Build { scene: PathBuf },
-    Show { scene: PathBuf },
-    Open { scene: PathBuf },
+    Build {
+        scene: PathBuf,
+    },
+    Show {
+        scene: PathBuf,
+    },
+    Open {
+        scene: PathBuf,
+    },
     State,
     Close,
     Screenshot,
+    #[command(name = "__viewer", hide = true)]
+    Viewer,
 }
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Scene {
     #[serde(default)]
@@ -32,6 +45,7 @@ pub struct Scene {
     #[serde(default)]
     pub camera: Option<Camera>,
 }
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Object {
     pub id: String,
@@ -52,6 +66,7 @@ pub struct Object {
     #[serde(default)]
     pub to: Option<[f32; 3]>,
 }
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Arrow {
     pub from: [f32; 3],
@@ -61,6 +76,7 @@ pub struct Arrow {
     #[serde(default = "opacity")]
     pub opacity: f32,
 }
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Camera {
     pub azimuth: f32,
@@ -70,22 +86,36 @@ pub struct Camera {
     #[serde(default)]
     pub quaternion: Option<[f32; 4]>,
 }
+
 fn one() -> [f32; 3] {
     [1.; 3]
 }
 fn opacity() -> f32 {
     1.
 }
-#[derive(Serialize, Deserialize, Default)]
+
+#[derive(Serialize, Deserialize, Default, Clone)]
 struct Runtime {
     scene: Option<String>,
     glb: Option<String>,
+    camera_state: Option<String>,
     pane: Option<String>,
+    viewer_pid: Option<u32>,
 }
-fn runtime_path() -> PathBuf {
+
+fn runtime_dir() -> PathBuf {
     dirs::runtime_dir()
         .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join("ai3d-runtime.json")
+        .join("ai3d")
+}
+fn runtime_path() -> PathBuf {
+    runtime_dir().join("runtime.json")
+}
+fn live_glb_path() -> PathBuf {
+    runtime_dir().join("scene.glb")
+}
+fn camera_path() -> PathBuf {
+    runtime_dir().join("camera.json")
 }
 fn read_runtime() -> Runtime {
     fs::read_to_string(runtime_path())
@@ -93,178 +123,321 @@ fn read_runtime() -> Runtime {
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default()
 }
-fn write_runtime(r: &Runtime) -> Result<()> {
-    fs::write(runtime_path(), serde_json::to_vec_pretty(r)?)?;
+fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let tmp = path.with_extension("tmp");
+    fs::write(&tmp, bytes)?;
+    fs::rename(tmp, path)?;
     Ok(())
 }
-fn parse(p: &Path) -> Result<Scene> {
-    serde_json::from_str(&fs::read_to_string(p).with_context(|| format!("read {}", p.display()))?)
-        .context("invalid scene JSON")
+fn write_runtime(runtime: &Runtime) -> Result<()> {
+    write_atomic(&runtime_path(), &serde_json::to_vec_pretty(runtime)?)
 }
-fn color(s: &str) -> [f32; 4] {
-    let n = s.trim_start_matches('#');
-    if n.len() >= 6 {
-        let x = |i| u8::from_str_radix(&n[i..i + 2], 16).unwrap_or(255) as f32 / 255.;
-        [x(0), x(2), x(4), 1.]
+fn absolute(path: &Path) -> Result<PathBuf> {
+    if path.is_absolute() {
+        Ok(path.to_path_buf())
     } else {
-        match s {
-            "red" => [1., 0., 0., 1.],
-            "blue" => [0., 0., 1., 1.],
-            "yellow" => [1., 1., 0., 1.],
-            "green" => [0., 1., 0., 1.],
-            _ => [0.7, 0.7, 0.7, 1.],
-        }
+        Ok(std::env::current_dir()?.join(path))
     }
 }
-fn build(scene: &Path) -> Result<PathBuf> {
-    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/scene_to_glb.py");
-    if Command::new("python3")
-        .args(["-c", "import trimesh"])
-        .status()
-        .map(|s| s.success())
+fn parse(path: &Path) -> Result<Scene> {
+    let scene: Scene = serde_json::from_str(
+        &fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?,
+    )
+    .context("invalid scene JSON")?;
+    for object in &scene.objects {
+        if !matches!(
+            object.kind.as_str(),
+            "sphere" | "cube" | "cylinder" | "cone" | "line" | "arrow"
+        ) {
+            bail!("unsupported primitive: {}", object.kind);
+        }
+    }
+    Ok(scene)
+}
+fn python() -> PathBuf {
+    Path::new(MANIFEST).join(".venv/bin/python")
+}
+fn build_to(scene: &Path, output: &Path) -> Result<()> {
+    parse(scene)?;
+    let python = python();
+    if !python.exists() {
+        bail!("missing .venv; run scripts/setup_rasterminal.sh first");
+    }
+    let script = Path::new(MANIFEST).join("scripts/scene_to_glb.py");
+    let tmp = output.with_extension("new.glb");
+    let status = Command::new(python)
+        .args([script.as_os_str(), scene.as_os_str(), tmp.as_os_str()])
+        .status()?;
+    if !status.success() {
+        bail!("scene compiler failed");
+    }
+    if let Some(parent) = output.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::rename(tmp, output)?;
+    Ok(())
+}
+fn stage(scene: &Path) -> Result<Runtime> {
+    let scene = absolute(scene)?;
+    let glb = live_glb_path();
+    build_to(&scene, &glb)?;
+    let mut runtime = read_runtime();
+    runtime.scene = Some(scene.display().to_string());
+    runtime.glb = Some(glb.display().to_string());
+    runtime.camera_state = Some(camera_path().display().to_string());
+    write_runtime(&runtime)?;
+    Ok(runtime)
+}
+
+fn json_string(value: &Value, key: &str) -> Option<String> {
+    if let Some(value) = value.get(key).and_then(Value::as_str) {
+        return Some(value.to_string());
+    }
+    match value {
+        Value::Object(map) => map.values().find_map(|value| json_string(value, key)),
+        Value::Array(values) => values.iter().find_map(|value| json_string(value, key)),
+        _ => None,
+    }
+}
+
+fn split_pane() -> Result<String> {
+    let output = Command::new("herdr")
+        .args([
+            "pane",
+            "split",
+            "--current",
+            "--direction",
+            "right",
+            "--cwd",
+            MANIFEST,
+            "--no-focus",
+        ])
+        .output()?;
+    if !output.status.success() {
+        bail!(
+            "herdr split failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let text = String::from_utf8(output.stdout)?;
+    let value: Value = serde_json::from_str(text.trim()).context("invalid herdr split output")?;
+    json_string(&value, "pane_id").context("herdr did not return pane_id")
+}
+
+fn rasterminal() -> PathBuf {
+    std::env::var_os("AI3D_RASTERMINAL")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| Path::new(MANIFEST).join("vendor/rasterminal/build/rasterminal"))
+}
+
+fn modified(path: &Path) -> Option<SystemTime> {
+    fs::metadata(path).ok()?.modified().ok()
+}
+
+fn viewer_is_alive(pid: u32) -> bool {
+    Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "command="])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| {
+            let command = String::from_utf8_lossy(&output.stdout);
+            command.contains("ai3d") && command.contains("__viewer")
+        })
         .unwrap_or(false)
-    {
-        let out = scene.with_extension("glb");
-        let status = Command::new("python3")
-            .args([
-                script.to_str().unwrap(),
-                scene.to_str().unwrap(),
-                out.to_str().unwrap(),
-            ])
-            .status()?;
-        if status.success() {
-            return Ok(out);
-        }
-    }
-    let s = parse(scene)?;
-    let out = scene.with_extension("glb");
-    let mut meshes = Vec::new();
-    for o in &s.objects {
-        let c = color(&o.color);
-        meshes.push(format!(
-            r#"{{"primitives":[{{"attributes":{{"POSITION":0}},"material":{}}}]}}"#,
-            meshes.len()
-        ));
-        let _ = c;
-    }
-    let json = format!(
-        r#"{{"asset":{{"version":"2.0","generator":"ai3d"}},"scene":0,"scenes":[{{"nodes":[{}]}}],"nodes":[{}],"meshes":[{}],"materials":[{{"pbrMetallicRoughness":{{"baseColorFactor":[1,0,0,1]}}}}],"buffers":[{{"byteLength":0}}]}}"#,
-        (0..s.objects.len())
-            .map(|i| i.to_string())
-            .collect::<Vec<_>>()
-            .join(","),
-        (0..s.objects.len())
-            .map(|i| format!(r#"{{"mesh":{}}}"#, i))
-            .collect::<Vec<_>>()
-            .join(","),
-        meshes.join(",")
-    );
-    let mut bytes = b"glTF".to_vec();
-    bytes.extend_from_slice(&2u32.to_le_bytes());
-    let total = 12 + 8 + json.len();
-    bytes.extend_from_slice(&(total as u32).to_le_bytes());
-    bytes.extend_from_slice(&(json.len() as u32).to_le_bytes());
-    bytes.extend_from_slice(b"JSON");
-    bytes.extend_from_slice(json.as_bytes());
-    fs::write(&out, bytes)?;
-    Ok(out)
 }
-fn main() -> Result<()> {
-    let cli = Cli::parse();
-    match cli.command {
-        Cmd::Build { scene } => {
-            println!("{}", build(&scene)?.display());
-            Ok(())
-        }
-        Cmd::State => {
-            let r = read_runtime();
-            if let Some(p) = r.scene {
-                println!("{}", fs::read_to_string(p)?);
-            } else {
-                println!(r#"{{"camera":null,"objects":[]}}"#);
+
+fn spawn_renderer(glb: &Path, camera: &Path) -> Result<Child> {
+    let binary = rasterminal();
+    if !binary.exists() {
+        bail!("rasterminal is not built; run scripts/setup_rasterminal.sh");
+    }
+    Ok(Command::new(binary)
+        .arg(glb)
+        .env("AI3D_WATCH", glb)
+        .env("AI3D_STATE", camera)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .spawn()?)
+}
+
+fn viewer() -> Result<()> {
+    let mut runtime = read_runtime();
+    let glb = runtime
+        .glb
+        .as_deref()
+        .map(PathBuf::from)
+        .context("no staged scene; run ai3d open/show first")?;
+    let camera = camera_path();
+    let mut child = spawn_renderer(&glb, &camera)?;
+    runtime.viewer_pid = Some(std::process::id());
+    write_runtime(&runtime)?;
+
+    let mut watched_scene = PathBuf::new();
+    let mut watched_mtime = None;
+    loop {
+        if let Some(status) = child.try_wait()? {
+            if !status.success() {
+                bail!("rasterminal exited with {status}");
             }
+            break;
+        }
+        let current = read_runtime();
+        if let Some(scene) = current.scene.as_deref().map(PathBuf::from) {
+            let mtime = modified(&scene);
+            if scene != watched_scene || (mtime.is_some() && mtime != watched_mtime) {
+                match build_to(&scene, &glb) {
+                    Ok(()) => {
+                        watched_scene = scene;
+                        watched_mtime = mtime;
+                        eprintln!("ai3d: scene reloaded");
+                    }
+                    Err(error) => eprintln!("ai3d: reload failed: {error:#}"),
+                }
+            }
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    let mut runtime = read_runtime();
+    runtime.viewer_pid = None;
+    write_runtime(&runtime)?;
+    Ok(())
+}
+
+fn state() -> Result<()> {
+    let runtime = read_runtime();
+    let mut scene = if let Some(path) = runtime.scene.as_deref() {
+        serde_json::from_str::<Value>(&fs::read_to_string(path)?)?
+    } else {
+        json!({"objects": [], "arrows": []})
+    };
+    let camera = runtime
+        .camera_state
+        .as_deref()
+        .and_then(|path| fs::read_to_string(path).ok())
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+        .and_then(|value| value.get("camera").cloned())
+        .unwrap_or(Value::Null);
+    scene["camera"] = camera;
+    scene["runtime"] = json!({
+        "pane": runtime.pane,
+        "viewer_pid": runtime.viewer_pid,
+        "glb": runtime.glb,
+    });
+    println!("{}", serde_json::to_string_pretty(&scene)?);
+    Ok(())
+}
+
+fn close() -> Result<()> {
+    let runtime = read_runtime();
+    if let Some(pane) = runtime.pane.as_deref() {
+        let status = Command::new("herdr")
+            .args(["pane", "close", pane])
+            .status()?;
+        if !status.success() {
+            bail!("failed to close ai3d pane {pane}");
+        }
+    } else if let Some(pid) = runtime.viewer_pid {
+        if viewer_is_alive(pid) {
+            let _ = Command::new("kill")
+                .args(["-TERM", &pid.to_string()])
+                .status();
+        }
+    }
+    write_runtime(&Runtime::default())?;
+    Ok(())
+}
+
+fn main() -> Result<()> {
+    match Cli::parse().command {
+        Cmd::Build { scene } => {
+            let output = absolute(&scene)?.with_extension("glb");
+            build_to(&scene, &output)?;
+            println!("{}", output.display());
             Ok(())
         }
         Cmd::Show { scene } => {
-            let glb = build(&scene)?;
-            let mut r = read_runtime();
-            r.scene = Some(scene.display().to_string());
-            r.glb = Some(glb.display().to_string());
-            write_runtime(&r)?;
-            watch(scene)?;
+            let active = read_runtime().viewer_pid.is_some_and(viewer_is_alive);
+            if !active {
+                bail!("no active viewer; run ai3d open first");
+            }
+            let runtime = stage(&scene)?;
+            println!("{}", serde_json::to_string_pretty(&runtime)?);
             Ok(())
         }
         Cmd::Open { scene } => {
-            let glb = build(&scene)?;
-            let mut r = read_runtime();
-            r.scene = Some(scene.display().to_string());
-            r.glb = Some(glb.display().to_string());
-            if std::env::var("HERDR_ENV").is_ok() {
-                let out = Command::new("herdr")
-                    .args([
-                        "pane",
-                        "split",
-                        "--current",
-                        "--direction",
-                        "right",
-                        "--no-focus",
-                    ])
-                    .output()?;
-                r.pane = Some(String::from_utf8_lossy(&out.stdout).trim().to_string());
-            } else {
-                eprintln!(
-                    "HERDR_ENV unavailable; run rasterminal {} in a right pane",
-                    glb.display()
-                );
+            let existing = read_runtime();
+            if existing.viewer_pid.is_some_and(viewer_is_alive) {
+                let runtime = stage(&scene)?;
+                println!("{}", serde_json::to_string_pretty(&runtime)?);
+                return Ok(());
             }
-            write_runtime(&r)?;
-            watch(scene)?;
-            Ok(())
-        }
-        Cmd::Close => {
-            let mut r = read_runtime();
-            if let Some(p) = r.pane {
+            if let Some(stale_pane) = existing.pane.as_deref() {
                 let _ = Command::new("herdr")
-                    .args(["pane", "close", "--pane", &p])
+                    .args(["pane", "close", stale_pane])
                     .status();
             }
-            write_runtime(&Runtime::default())?;
+            let mut runtime = stage(&scene)?;
+            if std::env::var_os("HERDR_ENV").is_none() {
+                eprintln!("Herdr is unavailable. In a Ghostty right pane run:");
+                eprintln!("{} __viewer", std::env::current_exe()?.display());
+                return Ok(());
+            }
+            let pane = split_pane()?;
+            runtime.pane = Some(pane.clone());
+            write_runtime(&runtime)?;
+            let exe = std::env::current_exe()?;
+            let status = Command::new("herdr")
+                .args(["pane", "run", &pane])
+                .arg(exe)
+                .arg("__viewer")
+                .status()?;
+            if !status.success() {
+                let _ = Command::new("herdr")
+                    .args(["pane", "close", &pane])
+                    .status();
+                bail!("failed to launch viewer in pane {pane}");
+            }
+            println!("{}", serde_json::to_string_pretty(&runtime)?);
             Ok(())
         }
+        Cmd::State => state(),
+        Cmd::Close => close(),
         Cmd::Screenshot => {
             println!(
-                r#"{{"supported":false,"reason":"Ghostty pane pixel capture is unavailable; Kitty graphics are not in PTY text."}}"#
+                "{}",
+                json!({
+                    "supported": false,
+                    "phase": 2,
+                    "reason": "Ghostty pane pixel capture is unavailable; Kitty graphics are not present in PTY text"
+                })
             );
             Ok(())
         }
+        Cmd::Viewer => viewer(),
     }
 }
-fn watch(scene: PathBuf) -> Result<()> {
-    let _ = build(&scene)?;
-    let (tx, rx) = std::sync::mpsc::channel();
-    let mut w = notify::recommended_watcher(tx)?;
-    w.watch(&scene, RecursiveMode::NonRecursive)?;
-    loop {
-        match rx.recv_timeout(Duration::from_secs(1)) {
-            Ok(_) => {
-                let glb = build(&scene)?;
-                let mut r = read_runtime();
-                r.glb = Some(glb.display().to_string());
-                write_runtime(&r)?;
-                println!("reloaded {}", glb.display());
-            }
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
-            Err(_) => break,
-        }
-    }
-    Ok(())
-}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
-    fn parses() {
-        let s: Scene = serde_json::from_str(r#"{"objects":[{"id":"a","type":"sphere"}]}"#).unwrap();
-        assert_eq!(s.objects[0].scale, [1., 1., 1.]);
+    fn parses_defaults() {
+        let scene: Scene =
+            serde_json::from_str(r#"{"objects":[{"id":"a","type":"sphere"}]}"#).unwrap();
+        assert_eq!(scene.objects[0].scale, [1., 1., 1.]);
+        assert_eq!(scene.objects[0].opacity, 1.);
+    }
+
+    #[test]
+    fn rejects_unknown_primitive() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        fs::write(file.path(), r#"{"objects":[{"id":"a","type":"torus"}]}"#).unwrap();
+        assert!(parse(file.path()).is_err());
     }
 }

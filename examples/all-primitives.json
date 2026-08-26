@@ -1,0 +1,10 @@
+{
+  "objects": [
+    {"id": "sphere", "type": "sphere", "position": [-2, 1, 0], "color": "red"},
+    {"id": "cube", "type": "cube", "position": [0, 1, 0], "rotation": [0, 25, 0], "scale": [0.5, 0.8, 0.5], "color": "blue"},
+    {"id": "cylinder", "type": "cylinder", "position": [2, 1, 0], "scale": [0.5, 0.5, 1], "color": "green", "opacity": 0.5},
+    {"id": "cone", "type": "cone", "position": [-2, -1, 0], "scale": [0.7, 0.7, 1], "color": "#ff00ff"},
+    {"id": "line", "type": "line", "from": [-0.8, -1, 0], "to": [0.8, -1, 0], "color": "#00ffff"},
+    {"id": "arrow", "type": "arrow", "from": [1.2, -1, 0], "to": [2.8, -1, 0], "color": "yellow"}
+  ]
+}

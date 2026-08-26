@@ -1,7 +1,51 @@
-diff --git a/README.ai3d b/README.ai3d
-new file mode 100644
-index 0000000..1111111
---- /dev/null
-+++ b/README.ai3d
-@@ -0,0 +1,3 @@
-+ai3d integration patch marker. Viewer reload is driven by replacing the GLB path and rerunning rasterminal in the right pane until upstream exposes a model reload API.
+diff --git a/src/main.cpp b/src/main.cpp
+index 54eee17..8930020 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -27,0 +28,2 @@
++#include <filesystem>
++#include <fstream>
+@@ -33,0 +36,19 @@ namespace
++    void write_ai3d_state(const Camera &camera, const char *path)
++    {
++        if (path == nullptr || *path == '\0') return;
++        const std::string tmp = std::string(path) + ".tmp";
++        std::ofstream out(tmp, std::ios::trunc);
++        if (!out) return;
++        const vec3 offset = camera.eye() - camera.target;
++        const float azimuth = std::atan2(offset.z, offset.x) * 180.0f / 3.14159265358979323846f;
++        const float elevation = std::atan2(offset.y, std::sqrt(offset.x * offset.x + offset.z * offset.z))
++            * 180.0f / 3.14159265358979323846f;
++        out << "{\"camera\":{\"quaternion\":[" << camera.orientation.x << "," << camera.orientation.y << ","
++            << camera.orientation.z << "," << camera.orientation.w << "],\"azimuth\":" << azimuth
++            << ",\"elevation\":" << elevation << ",\"distance\":" << camera.distance << ",\"target\":["
++            << camera.target.x << "," << camera.target.y << "," << camera.target.z << "]}}\n";
++        out.close();
++        std::error_code ec;
++        std::filesystem::rename(tmp, path, ec);
++        if (ec) { std::filesystem::remove(path, ec); std::filesystem::rename(tmp, path, ec); }
++    }
+@@ -754,0 +776,4 @@ int main(int argc, char *argv[])
++        const char *ai3d_watch = std::getenv("AI3D_WATCH");
++        const char *ai3d_state = std::getenv("AI3D_STATE");
++        std::error_code ai3d_ec;
++        auto ai3d_mtime = std::filesystem::last_write_time(args.model_path, ai3d_ec);
+@@ -781,0 +807,16 @@ int main(int argc, char *argv[])
++            if (ai3d_watch != nullptr && *ai3d_watch != '\0')
++            {
++                auto current = std::filesystem::last_write_time(ai3d_watch, ai3d_ec);
++                if (!ai3d_ec && current != ai3d_mtime)
++                {
++                    Camera saved = camera;
++                    Mesh replacement;
++                    if (replacement.load_model(ai3d_watch, args.ao, n_threads, args.smooth_angle))
++                    {
++                        mesh = std::move(replacement);
++                        camera = saved;
++                        scene_dirty = true;
++                        ai3d_mtime = current;
++                    }
++                }
++            }
+@@ -1150,0 +1192 @@ int main(int argc, char *argv[])
++            write_ai3d_state(camera, ai3d_state);

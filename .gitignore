@@ -1,0 +1,6 @@
+.venv/
+vendor/rasterminal/
+target/
+scripts/__pycache__/
+*.glb
+*.tmp
