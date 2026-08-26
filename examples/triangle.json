@@ -1,0 +1,12 @@
+{
+  "camera": {"azimuth": 0, "elevation": 0, "distance": 8, "target": [0, 0, 0], "near": 0.01, "far": 100},
+  "objects": [
+    {
+      "id": "triangle",
+      "type": "mesh",
+      "vertices": [[-3, -2, 0], [3, -2, 0], [0, 3, 0]],
+      "faces": [[0, 1, 2]],
+      "color": "#ffffff"
+    }
+  ]
+}

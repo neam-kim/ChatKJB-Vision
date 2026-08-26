@@ -49,8 +49,22 @@ def main(src,out):
         typ=o['type']
         if typ=='sphere': m=trimesh.creation.icosphere(subdivisions=2)
         elif typ=='cube': m=trimesh.creation.box(extents=[2,2,2])
-        elif typ=='cylinder': m=trimesh.creation.cylinder(radius=1,height=2)
+        elif typ=='cylinder':
+            if 'from' in o and 'to' in o:
+                a=np.array(o['from'],dtype=float); b=np.array(o['to'],dtype=float)
+                m=segment(a,b,0.10,c(o.get('color','aaaaaa'))+[round(255*float(o.get('opacity',1)))])
+                if m is None: continue
+                # segment already has world endpoints; only apply optional color/opacity here.
+                m.visual.face_colors=np.tile(c(o.get('color','aaaaaa'))+[round(255*float(o.get('opacity',1)))],(len(m.faces),1))
+                parts.append(m)
+                continue
+            m=trimesh.creation.cylinder(radius=1,height=2)
         elif typ=='cone': m=trimesh.creation.cone(radius=1,height=2)
+        elif typ=='mesh':
+            verts=np.asarray(o.get('vertices',[]),dtype=float)
+            faces=np.asarray(o.get('faces',[]),dtype=np.int64)
+            if len(verts)<3 or len(faces)<1: raise ValueError('mesh needs vertices and faces')
+            m=trimesh.Trimesh(vertices=verts, faces=faces, process=False)
         elif typ in ('line','arrow'):
             col=c(o.get('color','aaaaaa'))+[round(255*float(o.get('opacity',1)))]
             factory=arrow if typ=='arrow' else segment

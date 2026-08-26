@@ -1,0 +1,4 @@
+{
+  "camera": {"azimuth": 35, "elevation": 20, "distance": 7, "target": [0, 0, 0]},
+  "objects": [{"id":"cube","type":"cube","position":[0,0,0],"scale":[2.5,2.5,2.5],"color":"#ffffff"}]
+}

@@ -67,6 +67,10 @@ pub struct Object {
     pub from: Option<[f32; 3]>,
     #[serde(default)]
     pub to: Option<[f32; 3]>,
+    #[serde(default)]
+    pub vertices: Vec<[f32; 3]>,
+    #[serde(default)]
+    pub faces: Vec<[u32; 3]>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -205,7 +209,7 @@ fn parse(path: &Path) -> Result<Scene> {
     for object in &scene.objects {
         if !matches!(
             object.kind.as_str(),
-            "sphere" | "cube" | "cylinder" | "cone" | "line" | "arrow"
+            "sphere" | "cube" | "cylinder" | "cone" | "line" | "arrow" | "mesh"
         ) {
             bail!("unsupported primitive: {}", object.kind);
         }
@@ -313,6 +317,12 @@ fn spawn_renderer(glb: &Path, camera: &Path) -> Result<Child> {
     }
     Ok(Command::new(binary)
         .arg(glb)
+        // Herdr panes proxy the PTY and never answer rasterminal's Kitty
+        // graphics capability query, so the auto backend picks kitty and the
+        // image bytes are dropped: HUD text renders but the viewport stays
+        // empty. Half-block output is plain text and always survives the proxy.
+        .arg("--graphics")
+        .arg(std::env::var("AI3D_GRAPHICS").unwrap_or_else(|_| "blocks".to_string()))
         .env("AI3D_WATCH", glb)
         .env("AI3D_STATE", camera)
         .stdin(Stdio::inherit())

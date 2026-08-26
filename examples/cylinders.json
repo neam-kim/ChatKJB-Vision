@@ -1,0 +1,8 @@
+{
+  "camera": {"azimuth": 35, "elevation": 20, "distance": 9, "target": [0, 0, 1.5]},
+  "objects": [
+    {"id":"c1","type":"cylinder","position":[-1.8,0,1.5],"scale":[0.45,0.45,2.5],"color":"#ef4444"},
+    {"id":"c2","type":"cylinder","position":[0,0,1.5],"scale":[0.45,0.45,2.5],"color":"#3b82f6"},
+    {"id":"c3","type":"cylinder","position":[1.8,0,1.5],"scale":[0.45,0.45,2.5],"color":"#22c55e"}
+  ]
+}
