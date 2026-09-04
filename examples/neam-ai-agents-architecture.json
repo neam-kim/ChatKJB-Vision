@@ -1,0 +1,91 @@
+{
+  "camera": {
+    "azimuth": 38,
+    "elevation": 18,
+    "distance": 38,
+    "target": [0, 0.5, 1]
+  },
+  "objects": [
+    {"id":"access_codex_app_cli","type":"cube","position":[-6,0,9],"scale":[1.45,1.05,0.72],"color":"#38bdf8"},
+    {"id":"access_claude_grok","type":"cube","position":[0,0,9],"scale":[1.45,1.05,0.72],"color":"#38bdf8"},
+    {"id":"access_remote_devices","type":"cube","position":[6,0,9],"scale":[1.45,1.05,0.72],"color":"#38bdf8"},
+    {"id":"user_entry","type":"sphere","position":[-6,0,12],"scale":[0.72,0.72,0.72],"color":"#fde047"},
+
+    {"id":"primary_codex_agent","type":"sphere","position":[-5,-1,5],"scale":[1.28,1.28,1.28],"color":"#fde047"},
+    {"id":"oca_orchestrator","type":"cone","position":[-1,-1,5],"scale":[1.18,1.18,1.18],"color":"#a78bfa"},
+    {"id":"native_subagents_hub","type":"sphere","position":[3,-1,5],"scale":[1.06,1.06,1.06],"color":"#60a5fa"},
+    {"id":"herdr_workspace","type":"cylinder","position":[0,3,5],"scale":[1.35,1.35,0.82],"color":"#34d399"},
+    {"id":"herdr_pane_1","type":"cube","position":[4,2.6,5],"scale":[0.72,0.72,0.72],"color":"#6ee7b7"},
+    {"id":"herdr_pane_2","type":"cube","position":[6,2.6,5],"scale":[0.72,0.72,0.72],"color":"#6ee7b7"},
+
+    {"id":"subagent_luna","type":"sphere","position":[2.2,-3.6,4.2],"scale":[0.5,0.5,0.5],"color":"#60a5fa"},
+    {"id":"subagent_deepseek","type":"sphere","position":[4.1,-3.6,4.2],"scale":[0.5,0.5,0.5],"color":"#fb923c"},
+    {"id":"subagent_gemini","type":"sphere","position":[6,-3.6,4.2],"scale":[0.5,0.5,0.5],"color":"#c084fc"},
+
+    {"id":"opencodex_outer","type":"cylinder","position":[0,0,1],"scale":[1.85,1.85,0.52],"color":"#f472b6","opacity":0.30},
+    {"id":"opencodex_router","type":"cylinder","position":[0,0,1],"scale":[1.35,1.35,0.92],"color":"#ec4899"},
+    {"id":"opencodex_core","type":"sphere","position":[0,0,1],"scale":[0.62,0.62,0.62],"color":"#ffffff"},
+
+    {"id":"model_openai","type":"sphere","position":[-9,-1,-3],"scale":[0.88,0.88,0.88],"color":"#60a5fa"},
+    {"id":"model_anthropic","type":"sphere","position":[-6,-1,-3],"scale":[0.88,0.88,0.88],"color":"#fb923c"},
+    {"id":"model_google_antigravity","type":"sphere","position":[-3,-1,-3],"scale":[0.88,0.88,0.88],"color":"#c084fc"},
+    {"id":"model_xai","type":"sphere","position":[0,-1,-3],"scale":[0.88,0.88,0.88],"color":"#f43f5e"},
+    {"id":"model_opencode_zen","type":"sphere","position":[3,-1,-3],"scale":[0.88,0.88,0.88],"color":"#22d3ee"},
+    {"id":"model_openrouter","type":"sphere","position":[6,-1,-3],"scale":[0.88,0.88,0.88],"color":"#facc15"},
+    {"id":"model_local_qwen","type":"sphere","position":[9,-1,-3],"scale":[1.24,1.24,1.24],"color":"#34d399"},
+    {"id":"qwen_live_ring","type":"cylinder","position":[9,-1,-4.15],"scale":[1.55,1.55,0.08],"color":"#86efac","opacity":0.70},
+
+    {"id":"tool_aside_browser","type":"cube","position":[-9,5.3,1],"scale":[0.72,0.72,0.72],"color":"#22d3ee"},
+    {"id":"tool_mcp_servers","type":"cube","position":[-6.8,5.3,1],"scale":[0.72,0.72,0.72],"color":"#22d3ee"},
+    {"id":"tool_skills_plugins","type":"cube","position":[-4.6,5.3,1],"scale":[0.72,0.72,0.72],"color":"#22d3ee"},
+    {"id":"tool_shell_files_git","type":"cube","position":[-2.4,5.3,1],"scale":[0.72,0.72,0.72],"color":"#22d3ee"},
+
+    {"id":"llm_wiki","type":"cylinder","position":[7.5,5.3,1],"scale":[1.6,1.6,0.72],"color":"#facc15"},
+    {"id":"wiki_core","type":"cylinder","position":[7.5,5.3,1],"scale":[1.05,1.05,0.9],"color":"#fde68a"},
+    {"id":"native_memory_disabled","type":"cube","position":[10.7,5.3,1],"scale":[0.72,0.72,0.72],"color":"#94a3b8","opacity":0.24},
+
+    {"id":"backbone_top","type":"cylinder","from":[-10.5,-3.5,9],"to":[10.5,-3.5,9],"color":"#38bdf8","opacity":0.55},
+    {"id":"backbone_control","type":"cylinder","from":[-10.5,-4,5],"to":[10.5,-4,5],"color":"#a78bfa","opacity":0.55},
+    {"id":"backbone_route","type":"cylinder","from":[-10.5,-4.5,1],"to":[10.5,-4.5,1],"color":"#f472b6","opacity":0.55},
+    {"id":"backbone_models","type":"cylinder","from":[-10.5,-4,-3],"to":[10.5,-4,-3],"color":"#34d399","opacity":0.55}
+  ],
+  "arrows": [
+    {"from":[-6,0,12],"to":[-6,0,9.9],"color":"#fde047"},
+    {"from":[-6,0,8.1],"to":[-5,-1,6.35],"color":"#38bdf8"},
+    {"from":[0,0,8.1],"to":[0,0,2.15],"color":"#38bdf8"},
+    {"from":[6,0,8.1],"to":[0,3,6.05],"color":"#38bdf8"},
+
+    {"from":[-3.65,-1,5],"to":[-2.25,-1,5],"color":"#fde047"},
+    {"from":[-3.7,-0.65,4.25],"to":[1.8,-0.85,4.85],"color":"#fde047"},
+    {"from":[-0.7,0.15,5],"to":[0,2,5],"color":"#a78bfa"},
+    {"from":[1.35,3,5],"to":[3.2,2.7,5],"color":"#34d399"},
+    {"from":[1.35,3.05,5],"to":[5.2,2.7,5],"color":"#34d399"},
+
+    {"from":[3,-1,4],"to":[2.2,-3.6,4.2],"color":"#60a5fa"},
+    {"from":[3.25,-1.1,4],"to":[4.1,-3.6,4.2],"color":"#fb923c"},
+    {"from":[3.55,-1.05,4.2],"to":[6,-3.6,4.2],"color":"#c084fc"},
+
+    {"from":[-5,-1,3.65],"to":[-0.9,-0.2,2],"color":"#f472b6"},
+    {"from":[-1,-1,3.75],"to":[-0.35,-0.5,2],"color":"#f472b6"},
+    {"from":[3,-1,3.85],"to":[0.75,-0.35,2],"color":"#f472b6"},
+    {"from":[4.2,2.6,4.2],"to":[1,0.9,2],"color":"#f472b6"},
+    {"from":[6.2,2.6,4.2],"to":[1.2,1.1,2],"color":"#f472b6"},
+
+    {"from":[-0.8,-0.3,0.15],"to":[-9,-1,-2],"color":"#60a5fa"},
+    {"from":[-0.7,-0.3,0.05],"to":[-6,-1,-2],"color":"#fb923c"},
+    {"from":[-0.5,-0.35,0],"to":[-3,-1,-2],"color":"#c084fc"},
+    {"from":[0,-0.3,0],"to":[0,-1,-2],"color":"#f43f5e"},
+    {"from":[0.5,-0.35,0],"to":[3,-1,-2],"color":"#22d3ee"},
+    {"from":[0.7,-0.3,0.05],"to":[6,-1,-2],"color":"#facc15"},
+    {"from":[0.8,-0.3,0.15],"to":[9,-1,-1.65],"color":"#34d399"},
+
+    {"from":[-4.3,-0.3,4.15],"to":[-8.7,4.4,1.7],"color":"#22d3ee"},
+    {"from":[-4.1,-0.1,4.2],"to":[-6.6,4.4,1.7],"color":"#22d3ee"},
+    {"from":[-3.9,0.1,4.3],"to":[-4.5,4.4,1.7],"color":"#22d3ee"},
+    {"from":[-3.7,0.2,4.45],"to":[-2.4,4.4,1.7],"color":"#22d3ee"},
+
+    {"from":[-4.1,0,4.25],"to":[6.5,4.6,1.8],"color":"#facc15"},
+    {"from":[-0.3,0.2,4],"to":[6.4,4.8,1.6],"color":"#facc15"},
+    {"from":[10,5.3,1],"to":[9.2,5.3,1],"color":"#94a3b8"}
+  ]
+}
